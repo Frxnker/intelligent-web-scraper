@@ -1,0 +1,12 @@
+# Linguist language detection overrides
+*.py linguist-language=Python
+*.js linguist-language=JavaScript
+*.sql linguist-language=SQL
+
+# Forzar detección de SQL
+schema.sql linguist-detectable=true
+schema.sql linguist-language=SQL
+
+# Forzar detección de JavaScript
+scripts.js linguist-detectable=true
+scripts.js linguist-language=JavaScript
