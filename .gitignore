@@ -34,7 +34,8 @@ env/
 *~
 
 # Output
-output/
+output/*
+!output/.gitkeep
 *.csv
 *.json
 *.log
