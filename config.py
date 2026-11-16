@@ -1,14 +1,24 @@
 """
 Configuración del scraper.
 
-Las rutas se calculan a partir de la ubicación de este archivo, así que el
-programa funciona igual se lance desde el directorio que se lance.
+Las rutas no dependen del directorio desde el que se lance el programa:
+  - Ejecutando el código fuente, todo es relativo a la carpeta del proyecto.
+  - Empaquetado con PyInstaller (.exe), los datos (output/) van junto al
+    ejecutable y los recursos incluidos en el paquete (schema.sql, scripts.js,
+    web/static) se leen de la carpeta donde PyInstaller los extrae.
 """
 
+import sys
 from pathlib import Path
 
 # Rutas
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+    RECURSOS_DIR = Path(getattr(sys, '_MEIPASS', BASE_DIR))
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+    RECURSOS_DIR = BASE_DIR
+
 OUTPUT_DIR = BASE_DIR / 'output'
 DB_PATH = OUTPUT_DIR / 'scraper.db'
 TAREAS_PATH = OUTPUT_DIR / 'tareas_programadas.json'
@@ -44,3 +54,8 @@ DELAY_BETWEEN_REQUESTS = 2
 # Extracción
 PARSER = 'lxml'  # Opciones: 'lxml', 'html.parser', 'html5lib'
 MAX_ELEMENTOS = 50  # máximo de elementos por página en la extracción genérica
+
+# Interfaz web (servidor.py)
+SERVIDOR_HOST = '127.0.0.1'
+SERVIDOR_PUERTO = 8000
+MAX_JOBS_SIMULTANEOS = 2  # scrapings en paralelo; cada uno puede abrir su propio Chrome

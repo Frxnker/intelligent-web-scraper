@@ -119,6 +119,27 @@ class ComparadorPrecios:
         return coincidencias
 
     @staticmethod
+    def resumen(coincidencias) -> dict:
+        """
+        Resume una comparación: cuántos productos son más baratos en cada sitio y
+        cuánto se ahorraría comprando siempre en el más barato (por moneda).
+        """
+        ahorros = defaultdict(float)
+        contadores = {'sitio1': 0, 'sitio2': 0, 'igual': 0}
+        for match in coincidencias:
+            if match['mas_barato'] is None:
+                continue
+            contadores[match['mas_barato']] += 1
+            ahorros[match['moneda1'] or match['moneda2']] += match['diferencia']
+        return {
+            'comparados': len(coincidencias),
+            'mas_baratos_sitio1': contadores['sitio1'],
+            'mas_baratos_sitio2': contadores['sitio2'],
+            'mismo_precio': contadores['igual'],
+            'ahorro': [{'moneda': moneda, 'importe': importe} for moneda, importe in ahorros.items()],
+        }
+
+    @staticmethod
     def mostrar_comparacion(coincidencias, nombre_sitio1='Sitio 1', nombre_sitio2='Sitio 2'):
         """Muestra la comparación de precios por consola."""
         if not coincidencias:
@@ -128,9 +149,6 @@ class ComparadorPrecios:
         print(f"\n{Fore.CYAN}{'=' * 90}")
         print(f"{Fore.YELLOW}💰 COMPARACIÓN DE PRECIOS: {nombre_sitio1} vs {nombre_sitio2}")
         print(f"{Fore.CYAN}{'=' * 90}\n")
-
-        ahorros = defaultdict(float)  # por moneda
-        mas_baratos_sitio1 = mas_baratos_sitio2 = 0
 
         for i, match in enumerate(coincidencias, 1):
             titulo = str(match['producto1'].get('titulo', 'N/A'))[:60]
@@ -150,35 +168,35 @@ class ComparadorPrecios:
                 if match['mas_barato'] == 'sitio1':
                     print(f"   {Fore.CYAN}{nombre_sitio1}: {Fore.GREEN}{texto1} ✓ (más barato)")
                     print(f"   {Fore.CYAN}{nombre_sitio2}: {Fore.WHITE}{texto2}")
-                    mas_baratos_sitio1 += 1
                 elif match['mas_barato'] == 'sitio2':
                     print(f"   {Fore.CYAN}{nombre_sitio1}: {Fore.WHITE}{texto1}")
                     print(f"   {Fore.CYAN}{nombre_sitio2}: {Fore.GREEN}{texto2} ✓ (más barato)")
-                    mas_baratos_sitio2 += 1
                 else:
                     print(f"   {Fore.CYAN}{nombre_sitio1}: {Fore.WHITE}{texto1}")
                     print(f"   {Fore.CYAN}{nombre_sitio2}: {Fore.WHITE}{texto2} (mismo precio)")
 
-                ahorros[moneda] += match['diferencia']
                 porcentaje = match['porcentaje_diferencia']
                 detalle = f" ({porcentaje:.1f}%)" if porcentaje is not None else ''
                 print(f"   {Fore.YELLOW}💰 Diferencia: {formatear_precio(match['diferencia'], moneda)}{detalle}")
 
             print(f"   {Fore.MAGENTA}📊 Similitud: {match['similitud'] * 100:.0f}%\n")
 
+        resumen = ComparadorPrecios.resumen(coincidencias)
         print(f"{Fore.GREEN}{'=' * 90}")
         print(f"{Fore.GREEN}📊 RESUMEN")
         print(f"{Fore.GREEN}{'=' * 90}")
-        print(f"{Fore.WHITE}🔍 Productos comparados: {len(coincidencias)}")
-        print(f"{Fore.GREEN}✓ {nombre_sitio1} más barato: {mas_baratos_sitio1} productos")
-        print(f"{Fore.GREEN}✓ {nombre_sitio2} más barato: {mas_baratos_sitio2} productos")
-        for moneda, ahorro in ahorros.items():
-            if ahorro > 0:
-                print(f"{Fore.YELLOW}💰 Ahorro potencial comprando lo más barato: {formatear_precio(ahorro, moneda)}")
+        print(f"{Fore.WHITE}🔍 Productos comparados: {resumen['comparados']}")
+        print(f"{Fore.GREEN}✓ {nombre_sitio1} más barato: {resumen['mas_baratos_sitio1']} productos")
+        print(f"{Fore.GREEN}✓ {nombre_sitio2} más barato: {resumen['mas_baratos_sitio2']} productos")
+        for ahorro in resumen['ahorro']:
+            if ahorro['importe'] > 0:
+                print(f"{Fore.YELLOW}💰 Ahorro potencial comprando lo más barato: "
+                      f"{formatear_precio(ahorro['importe'], ahorro['moneda'])}")
         print()
 
 
-def comparar_sitios(url1, url2, scraper_class, nombre_sitio1='Sitio 1', nombre_sitio2='Sitio 2', umbral=0.6):
+def comparar_sitios(url1, url2, scraper_class, nombre_sitio1='Sitio 1', nombre_sitio2='Sitio 2', umbral=0.6,
+                    progreso=None, con_productos=False):
     """
     Scrapea dos URLs y compara sus productos.
 
@@ -187,6 +205,8 @@ def comparar_sitios(url1, url2, scraper_class, nombre_sitio1='Sitio 1', nombre_s
         scraper_class: clase del scraper (Scraper o SeleniumScraper).
         nombre_sitio1, nombre_sitio2: nombres para mostrar.
         umbral: similitud mínima de títulos (0-1).
+        progreso: función opcional progreso(sitio, 2) que se llama antes de scrapear cada sitio.
+        con_productos: si es True devuelve (coincidencias, productos1, productos2).
     """
     print(f"\n{Fore.CYAN}{'=' * 70}")
     print(f"{Fore.YELLOW}🔍 SCRAPEANDO SITIOS PARA COMPARAR")
@@ -194,10 +214,14 @@ def comparar_sitios(url1, url2, scraper_class, nombre_sitio1='Sitio 1', nombre_s
 
     # Un único scraper para los dos sitios: si hace falta Chrome, se abre una sola vez
     with scraper_class(headless=True) as scraper:
+        if progreso is not None:
+            progreso(1, 2)
         print(f"{Fore.WHITE}📍 Scrapeando {nombre_sitio1}...")
         productos1 = scraper.scrapear_pagina_universal(url1, 'temp_sitio1')
         print(f"{Fore.GREEN}✅ {len(productos1)} productos encontrados\n")
 
+        if progreso is not None:
+            progreso(2, 2)
         print(f"{Fore.WHITE}📍 Scrapeando {nombre_sitio2}...")
         productos2 = scraper.scrapear_pagina_universal(url2, 'temp_sitio2')
         print(f"{Fore.GREEN}✅ {len(productos2)} productos encontrados\n")
@@ -205,4 +229,6 @@ def comparar_sitios(url1, url2, scraper_class, nombre_sitio1='Sitio 1', nombre_s
     print(f"{Fore.CYAN}🔄 Comparando productos...\n")
     coincidencias = ComparadorPrecios.comparar_listas(productos1, productos2, umbral)
     ComparadorPrecios.mostrar_comparacion(coincidencias, nombre_sitio1, nombre_sitio2)
+    if con_productos:
+        return coincidencias, productos1, productos2
     return coincidencias

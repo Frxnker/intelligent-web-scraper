@@ -9,10 +9,11 @@ driver.execute_script() y se decide qué extractor usar según el dominio.
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 from urllib.parse import urlparse
 
-RUTA_SCRIPTS = Path(__file__).resolve().parent / 'scripts.js'
+from config import RECURSOS_DIR
+
+RUTA_SCRIPTS = RECURSOS_DIR / 'scripts.js'
 
 # (fragmento del dominio, función de scripts.js)
 EXTRACTORES_POR_SITIO = (

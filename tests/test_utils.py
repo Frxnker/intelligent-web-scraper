@@ -17,6 +17,8 @@ from utils import export_to_csv, nombre_desde_url, normalizar_url, truncar
     ('ftp://tienda.test', None),
     ('https://', None),
     ('https://[::1', None),
+    ('javascript:alert(1)', None),
+    ('https://tienda.test:99999/', None),
     ('no es una url', None),
 ])
 def test_normalizar_url(entrada, esperado):

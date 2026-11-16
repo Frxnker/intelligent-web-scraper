@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from colorama import Fore
 
-from config import DELAY_BETWEEN_REQUESTS
+import config
 from utils import nombre_desde_url
 
 PARAMETROS_PAGINA = ('page', 'p', 'pg', 'pagina')
@@ -55,7 +55,7 @@ def _clave(dato: dict) -> tuple:
     return ('contenido', dato.get('titulo'), dato.get('precio'))
 
 
-def scrapear_con_paginacion(scraper, url_base, max_paginas=5, delay=DELAY_BETWEEN_REQUESTS, nombre_base=None):
+def scrapear_con_paginacion(scraper, url_base, max_paginas=5, delay=None, nombre_base=None, progreso=None):
     """
     Scrapea varias páginas seguidas.
 
@@ -63,12 +63,17 @@ def scrapear_con_paginacion(scraper, url_base, max_paginas=5, delay=DELAY_BETWEE
         scraper: instancia con scrapear_pagina_universal(url, nombre) (Scraper o SeleniumScraper).
         url_base: URL de la primera página.
         max_paginas: número máximo de páginas a scrapear.
-        delay: pausa entre páginas en segundos, para no sobrecargar el servidor.
+        delay: pausa entre páginas en segundos, para no sobrecargar el servidor
+            (por defecto config.DELAY_BETWEEN_REQUESTS).
         nombre_base: prefijo de los archivos generados (por defecto, el dominio).
+        progreso: función opcional progreso(pagina, total) que se llama antes de
+            cada página. Si lanza una excepción, la paginación se interrumpe.
 
     Returns:
         Lista con los elementos de todas las páginas, sin repetidos.
     """
+    if delay is None:
+        delay = config.DELAY_BETWEEN_REQUESTS
     print(f"\n{Fore.CYAN}{'=' * 70}")
     print(f"{Fore.YELLOW}📄 SCRAPING CON PAGINACIÓN")
     print(f"{Fore.CYAN}{'=' * 70}\n")
@@ -81,13 +86,19 @@ def scrapear_con_paginacion(scraper, url_base, max_paginas=5, delay=DELAY_BETWEE
     paginas_scrapeadas = 0
 
     for i, url in enumerate(urls, 1):
+        if progreso is not None:
+            progreso(i, len(urls))
         print(f"{Fore.CYAN}📄 Scrapeando página {i}/{len(urls)}...")
         print(f"{Fore.WHITE}   URL: {url}\n")
 
         try:
             datos = scraper.scrapear_pagina_universal(url, f'{nombre_base}_pagina_{i}')
         except Exception as e:  # noqa: BLE001 - se conservan las páginas ya obtenidas
-            print(f"{Fore.RED}❌ Error en página {i}: {e}\n")
+            if not todos_los_datos:
+                # Sin páginas que conservar: el error se propaga para que quien llama lo vea
+                # (si no, un fallo al abrir el navegador parecería una página sin productos)
+                raise
+            print(f"{Fore.RED}❌ Error en página {i}: {e}; se conservan las páginas anteriores\n")
             break
         paginas_scrapeadas = i
 

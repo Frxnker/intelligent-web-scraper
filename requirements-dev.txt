@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=8.0
+httpx>=0.27          # cliente HTTP que usa el TestClient de FastAPI en los tests
+pyinstaller>=6.0     # solo para generar el .exe (intelligent-web-scraper.spec)

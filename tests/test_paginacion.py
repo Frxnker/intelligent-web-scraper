@@ -1,3 +1,5 @@
+import pytest
+
 from paginacion import Paginador, scrapear_con_paginacion
 
 
@@ -23,7 +25,10 @@ class ScraperPaginas:
 
     def scrapear_pagina_universal(self, url, nombre):
         self.urls.append(url)
-        return self.paginas[len(self.urls) - 1] if len(self.urls) <= len(self.paginas) else []
+        pagina = self.paginas[len(self.urls) - 1] if len(self.urls) <= len(self.paginas) else []
+        if isinstance(pagina, Exception):
+            raise pagina
+        return pagina
 
 
 def item(n):
@@ -49,3 +54,30 @@ def test_paginacion_se_detiene_sin_datos():
     datos = scrapear_con_paginacion(scraper, 'https://t.test/', max_paginas=5, delay=0)
     assert len(datos) == 1
     assert len(scraper.urls) == 2
+
+
+def test_error_en_una_pagina_posterior_conserva_las_anteriores():
+    scraper = ScraperPaginas([[item(1)], RuntimeError('se cerró el navegador'), [item(3)]])
+    datos = scrapear_con_paginacion(scraper, 'https://t.test/', max_paginas=3, delay=0)
+    assert [d['titulo'] for d in datos] == ['Producto 1']
+
+
+def test_error_en_la_primera_pagina_se_propaga():
+    # Sin páginas que conservar, un fallo (p. ej. Chrome no arranca) no debe parecer "sin productos"
+    scraper = ScraperPaginas([RuntimeError('Chrome no arranca')])
+    with pytest.raises(RuntimeError, match='Chrome no arranca'):
+        scrapear_con_paginacion(scraper, 'https://t.test/', max_paginas=3, delay=0)
+
+
+def test_progreso_y_cancelacion():
+    llamadas = []
+
+    def progreso(pagina, total):
+        llamadas.append((pagina, total))
+        if pagina == 2:
+            raise KeyboardInterrupt  # cualquier excepción del progreso interrumpe la paginación
+
+    with pytest.raises(KeyboardInterrupt):
+        scrapear_con_paginacion(ScraperPaginas([[item(1)], [item(2)]]), 'https://t.test/', max_paginas=2,
+                                delay=0, progreso=progreso)
+    assert llamadas == [(1, 2), (2, 2)]

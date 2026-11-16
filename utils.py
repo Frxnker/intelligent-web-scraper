@@ -30,6 +30,17 @@ def _campos(data: list[dict]) -> list[str]:
     return list(campos)
 
 
+def escribir_csv(data: list[dict], destino, valor_vacio: str = 'N/A', campos: list[str] | None = None):
+    """
+    Escribe una lista de diccionarios como CSV en un archivo abierto (o io.StringIO).
+
+    Las columnas son `campos` o, si no se indican, la unión de las claves de los registros.
+    """
+    writer = csv.DictWriter(destino, fieldnames=campos or _campos(data), restval=valor_vacio)
+    writer.writeheader()
+    writer.writerows(data)
+
+
 def export_to_csv(data: list[dict], filename: str) -> Path | None:
     """Exporta una lista de diccionarios a output/<filename>. Devuelve la ruta o None."""
     if not data:
@@ -39,9 +50,7 @@ def export_to_csv(data: list[dict], filename: str) -> Path | None:
     filepath = ensure_output_dir() / filename
     try:
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=_campos(data), restval='N/A')
-            writer.writeheader()
-            writer.writerows(data)
+            escribir_csv(data, f)
     except OSError as e:
         print(f"{Fore.RED}✗ Error al exportar CSV a {filepath}: {e}")
         return None
@@ -128,6 +137,7 @@ def normalizar_url(texto: str) -> str | None:
     try:
         partes = urlparse(texto)
         hostname = partes.hostname
+        partes.port  # noqa: B018 - lanza ValueError si el puerto no es válido ("javascript:alert(1)")
     except ValueError:  # p. ej. "https://[::1" (IPv6 mal cerrada)
         return None
     if partes.scheme not in ('http', 'https') or not hostname or ' ' in partes.netloc:

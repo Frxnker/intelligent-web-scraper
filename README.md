@@ -1,8 +1,9 @@
 # Intelligent Web Scraper
 
-Herramienta de línea de comandos en Python para extraer listados de páginas web
-(productos, artículos), guardarlos en CSV, JSON y SQLite, comparar precios entre
-dos sitios y repetir el scraping de forma periódica.
+Herramienta en Python para extraer listados de páginas web (productos,
+artículos), guardarlos en CSV, JSON y SQLite, comparar precios entre dos sitios
+y repetir el scraping de forma periódica. Se usa desde un menú de consola o
+desde una interfaz web local en el navegador.
 
 ## Qué hace
 
@@ -35,6 +36,8 @@ dos sitios y repetir el scraping de forma periódica.
   de título.
 - **Tareas programadas** que se repiten cada N minutos mientras el programa está
   abierto.
+- **Interfaz web local** (FastAPI) con las mismas funciones que el menú, una API
+  JSON y la opción de empaquetarla como un `.exe`.
 
 ## Requisitos
 
@@ -75,6 +78,12 @@ instalado; el navegador se ejecuta en modo headless.
 
 ## Uso
 
+Hay dos formas de usarlo, que comparten la misma base de datos y los mismos
+archivos de `output/`: el menú de consola (`python main.py`) y la interfaz web
+(`python servidor.py`, ver [Interfaz web](#interfaz-web)).
+
+### Menú de consola
+
 ```bash
 python main.py
 ```
@@ -100,8 +109,8 @@ Si la URL no lleva `http://` o `https://` se añade `https://`.
 
 ### Archivos generados
 
-Todo se guarda en `output/`, dentro de la carpeta del proyecto, se lance el
-programa desde donde se lance:
+Todo se guarda en `output/`, dentro de la carpeta del proyecto (o junto al
+`.exe` si se usa el ejecutable), se lance el programa desde donde se lance:
 
 | Archivo | Contenido |
 |---------|-----------|
@@ -147,6 +156,100 @@ Las opciones están en `config.py`:
 | `DELAY_BETWEEN_REQUESTS` | 2 | Pausa en segundos entre páginas al paginar |
 | `MAX_ELEMENTOS` | 50 | Máximo de elementos por página en la extracción genérica |
 | `USER_AGENT`, `DEFAULT_HEADERS` | | Cabeceras de las peticiones |
+| `SERVIDOR_HOST`, `SERVIDOR_PUERTO` | `127.0.0.1`, 8000 | Dirección de la interfaz web |
+| `MAX_JOBS_SIMULTANEOS` | 2 | Scrapings a la vez desde la web; cada uno puede abrir su propio Chrome |
+
+## Interfaz web
+
+### Arrancarla
+
+```bash
+python servidor.py
+```
+
+Arranca en <http://127.0.0.1:8000> y abre el navegador automáticamente. Se
+detiene con **Ctrl+C** en la ventana de la consola; si hay un scraping en
+marcha, el servidor espera a que termine la página que está descargando y
+cierra su navegador antes de salir.
+
+Opciones:
+
+| Opción | Descripción |
+|--------|-------------|
+| `--port 8001` | Otro puerto (si el 8000 está ocupado el programa lo avisa) |
+| `--no-abrir` | No abrir el navegador |
+| `--host 0.0.0.0` | Escuchar en la red local. La API no tiene usuarios ni contraseñas: úsalo solo en una red de confianza |
+
+El menú de consola sigue funcionando igual y se puede usar a la vez.
+
+### Pestañas
+
+- **Scrapear.** URL y número de páginas (1 a 10). El scraping se ejecuta en
+  segundo plano; una barra de progreso indica la página por la que va y, al
+  terminar, se muestra cuántos productos se encontraron y guardaron y una
+  muestra de ellos. Si se recarga la página, se sigue el progreso del mismo
+  trabajo.
+- **Productos.** Productos guardados en tarjetas con imagen, título, precio,
+  sitio y enlace a la tienda. Búsqueda por título, filtro por sitio y rango de
+  precio, orden por fecha, precio o título, y paginación. Al hacer clic en un
+  producto se abre la gráfica de su historial de precios (con su tabla). Los
+  botones Exportar CSV y Exportar JSON descargan los productos que cumplen los
+  filtros actuales.
+- **Comparar.** Dos URLs, nombres opcionales y la similitud mínima de títulos.
+  El resultado es una tabla con los productos emparejados, el más barato
+  marcado en cada fila y el ahorro total comprando cada producto donde es más
+  barato.
+- **Tareas.** Crear, listar y eliminar tareas programadas, con su frecuencia,
+  número de ejecuciones, última y próxima ejecución. Se ejecutan en segundo
+  plano mientras el servidor esté encendido (son las mismas tareas que las del
+  menú de consola).
+- **Estadísticas.** Total de productos, sitios y ejecuciones, precio medio por
+  moneda, últimas ejecuciones (con su estado y duración) y productos por sitio.
+
+La gráfica usa Chart.js, que se descarga de un CDN: sin conexión a internet se
+muestra solo la tabla del historial. El resto de la interfaz funciona sin
+conexión (aunque scrapear, obviamente, necesita red).
+
+### API
+
+La interfaz usa una API JSON que también se puede usar directamente. La
+documentación interactiva está en <http://127.0.0.1:8000/docs>.
+
+| Método y ruta | Descripción |
+|---------------|-------------|
+| `POST /api/scrape` | `{"url": ..., "paginas": 1-10}`. Lanza el scraping en segundo plano y devuelve `job_id` |
+| `GET /api/jobs/{id}` | Estado (`pendiente`, `en_curso`, `terminado`, `error`), progreso, número de productos, error y resultado |
+| `GET /api/productos` | Filtros `sitio`, `q`, `precio_min`, `precio_max`, `orden` (`fecha`, `precio`, `titulo`), `direccion` (`asc`, `desc`), `pagina`, `por_pagina` (máx. 100) |
+| `GET /api/productos/{id}/historial` | Historial de precios de un producto |
+| `POST /api/comparar` | `{"url1", "url2", "nombre1", "nombre2", "umbral": 0.5-1.0}`. También en segundo plano |
+| `GET /api/estadisticas` | Totales, productos por sitio, precio medio por moneda y últimas ejecuciones |
+| `GET /api/tareas`, `POST /api/tareas`, `DELETE /api/tareas/{nombre}` | Tareas programadas |
+| `GET /api/exportar?formato=csv\|json` | Descarga los productos (acepta los mismos filtros que `/api/productos`) |
+
+Los errores siempre tienen la forma `{"error": "...", "detalles": [{"campo": ..., "mensaje": ...}]}`.
+Los trabajos en segundo plano se guardan en memoria y se pierden al reiniciar
+el servidor; el registro permanente de cada ejecución está en la base de datos
+(pestaña Estadísticas).
+
+### Generar el .exe (Windows)
+
+```powershell
+pip install -r requirements-dev.txt
+pyinstaller --noconfirm --clean intelligent-web-scraper.spec
+```
+
+Se genera `dist\IntelligentWebScraper.exe`, un único archivo que hace lo mismo
+que `python servidor.py` (acepta las mismas opciones). Al ejecutarlo crea
+`output\` junto al `.exe`, sea cual sea la carpeta desde la que se lance. La
+primera vez tarda unos segundos más en arrancar porque se descomprime.
+
+El ejecutable no incluye Google Chrome: el equipo donde se use tiene que tenerlo
+instalado para las páginas que necesitan navegador. El chromedriver lo descarga
+Selenium Manager la primera vez (necesita internet). Algunos antivirus
+desconfían de los ejecutables generados con PyInstaller.
+
+En Linux o macOS el mismo comando genera `dist/IntelligentWebScraper` para ese
+sistema (PyInstaller no genera ejecutables para otro sistema operativo).
 
 ## Precios
 
@@ -196,6 +299,13 @@ antes de actualizar.
 ```
 intelligent-web-scraper/
 ├── main.py               Menú de consola
+├── servidor.py           Arranque de la interfaz web
+├── web/
+│   ├── app.py            API (FastAPI) y archivos estáticos
+│   ├── esquemas.py       Validación de las entradas (Pydantic)
+│   ├── jobs.py           Trabajos en segundo plano
+│   └── static/           index.html, styles.css, app.js
+├── servicios.py          Scrapear y guardar (lo comparten consola, web y programador)
 ├── scraper.py            Estrategia: sin navegador primero, Selenium si hace falta
 ├── scraper_selenium.py   Navegador Chrome: carga, esperas, scroll, scripts JS
 ├── extractor.py          Extracción genérica con BeautifulSoup
@@ -210,7 +320,8 @@ intelligent-web-scraper/
 ├── utils.py              Exportación a CSV/JSON y validación de URLs
 ├── config.py             Configuración
 ├── requirements.txt      Dependencias
-├── requirements-dev.txt  Dependencias para desarrollo (pytest)
+├── requirements-dev.txt  Dependencias para tests y para generar el .exe
+├── intelligent-web-scraper.spec   Configuración de PyInstaller
 ├── pytest.ini
 ├── tests/                Tests
 └── output/               Resultados (no se sube al repositorio)
@@ -220,12 +331,13 @@ intelligent-web-scraper/
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+python -m pytest -v
 ```
 
 Los tests no acceden a internet ni necesitan Chrome: usan HTML de ejemplo, una
-sesión HTTP y un navegador simulados, y bases de datos temporales. Si Node.js
-está instalado, también se comprueba que `scripts.js` es JavaScript válido.
+sesión HTTP y un navegador simulados, y bases de datos temporales. La API se
+prueba con el `TestClient` de FastAPI y un scraper falso. Si Node.js está
+instalado, también se comprueba que `scripts.js` es JavaScript válido.
 
 ## Limitaciones
 
@@ -251,7 +363,13 @@ está instalado, también se comprueba que `scripts.js` es JavaScript válido.
   producto (variantes, packs). Un producto del segundo sitio puede emparejarse
   con varios del primero.
 - **Programador.** Las tareas solo se ejecutan mientras `main.py` está abierto
-  con el programador iniciado.
+  con el programador iniciado, o mientras `servidor.py` está encendido. No
+  conviene tener los dos programadores en marcha a la vez: cada uno ejecutaría
+  las tareas por su cuenta.
+- **Interfaz web.** Pensada para uso local: no tiene usuarios ni contraseñas.
+  Si se cierra la ventana de la consola en lugar de pulsar Ctrl+C con un
+  scraping en marcha, Windows termina el proceso sin dejarle cerrar el
+  navegador y puede quedar un Chrome abierto en segundo plano.
 
 ## Uso responsable
 

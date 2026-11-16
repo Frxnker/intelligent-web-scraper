@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Intelligent Web Scraper</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232456d3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Chart.js solo se usa para la gráfica del historial; si no carga (sin conexión) se muestra una tabla -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+    <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="cabecera">
+    <div class="cabecera-interior">
+        <div class="marca">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+            </svg>
+            Intelligent Web Scraper
+        </div>
+        <nav class="pestanas" role="tablist" aria-label="Secciones">
+            <button class="pestana" role="tab" id="pestana-scrapear" aria-controls="vista-scrapear" data-vista="scrapear">Scrapear</button>
+            <button class="pestana" role="tab" id="pestana-productos" aria-controls="vista-productos" data-vista="productos">Productos</button>
+            <button class="pestana" role="tab" id="pestana-comparar" aria-controls="vista-comparar" data-vista="comparar">Comparar</button>
+            <button class="pestana" role="tab" id="pestana-tareas" aria-controls="vista-tareas" data-vista="tareas">Tareas</button>
+            <button class="pestana" role="tab" id="pestana-estadisticas" aria-controls="vista-estadisticas" data-vista="estadisticas">Estadísticas</button>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <!-- ============================================================ Scrapear -->
+    <section class="vista" id="vista-scrapear" role="tabpanel" aria-labelledby="pestana-scrapear" hidden>
+        <div class="vista-cabecera">
+            <div>
+                <h1>Scrapear una URL</h1>
+                <p>Extrae los productos de un listado y los guarda en la base de datos.</p>
+            </div>
+        </div>
+
+        <form class="panel formulario" id="form-scrape" novalidate>
+            <div class="campo campo-doble">
+                <label for="scrape-url">URL del listado</label>
+                <input id="scrape-url" name="url" type="text" inputmode="url" autocomplete="url"
+                       placeholder="https://books.toscrape.com/" required>
+            </div>
+            <div class="campo">
+                <label for="scrape-paginas">Páginas</label>
+                <input id="scrape-paginas" name="paginas" type="number" min="1" max="10" value="1" required>
+                <small>De 1 a 10</small>
+            </div>
+            <div class="acciones">
+                <button class="boton boton-primario" type="submit" id="scrape-enviar">Scrapear</button>
+            </div>
+        </form>
+
+        <div class="salida" id="scrape-estado"></div>
+    </section>
+
+    <!-- ============================================================ Productos -->
+    <section class="vista" id="vista-productos" role="tabpanel" aria-labelledby="pestana-productos" hidden>
+        <div class="vista-cabecera">
+            <div>
+                <h1>Productos guardados</h1>
+                <p>Haz clic en un producto para ver la evolución de su precio.</p>
+            </div>
+            <div class="acciones">
+                <a class="boton boton-secundario" id="exportar-csv" href="/api/exportar?formato=csv" download>Exportar CSV</a>
+                <a class="boton boton-secundario" id="exportar-json" href="/api/exportar?formato=json" download>Exportar JSON</a>
+            </div>
+        </div>
+
+        <form class="panel filtros" id="form-filtros" role="search">
+            <div class="campo campo-busqueda">
+                <label for="filtro-q">Buscar</label>
+                <input id="filtro-q" type="search" placeholder="Texto del título" autocomplete="off">
+            </div>
+            <div class="campo">
+                <label for="filtro-sitio">Sitio</label>
+                <select id="filtro-sitio"><option value="">Todos</option></select>
+            </div>
+            <div class="campo">
+                <label for="filtro-min">Precio mínimo</label>
+                <input id="filtro-min" type="number" min="0" step="any" inputmode="decimal">
+            </div>
+            <div class="campo">
+                <label for="filtro-max">Precio máximo</label>
+                <input id="filtro-max" type="number" min="0" step="any" inputmode="decimal">
+            </div>
+            <div class="campo">
+                <label for="filtro-orden">Ordenar por</label>
+                <select id="filtro-orden">
+                    <option value="fecha:desc">Más recientes</option>
+                    <option value="fecha:asc">Más antiguos</option>
+                    <option value="precio:asc">Precio: menor a mayor</option>
+                    <option value="precio:desc">Precio: mayor a menor</option>
+                    <option value="titulo:asc">Título: A-Z</option>
+                    <option value="titulo:desc">Título: Z-A</option>
+                </select>
+            </div>
+            <div class="acciones">
+                <button class="boton boton-secundario" type="reset">Limpiar filtros</button>
+            </div>
+        </form>
+
+        <div class="salida" id="productos-resultados"></div>
+    </section>
+
+    <!-- ============================================================ Comparar -->
+    <section class="vista" id="vista-comparar" role="tabpanel" aria-labelledby="pestana-comparar" hidden>
+        <div class="vista-cabecera">
+            <div>
+                <h1>Comparar precios</h1>
+                <p>Scrapea dos listados y empareja los productos por similitud de título.</p>
+            </div>
+        </div>
+
+        <form class="panel formulario" id="form-comparar" novalidate>
+            <div class="campo campo-doble">
+                <label for="comparar-url1">URL del primer sitio</label>
+                <input id="comparar-url1" name="url1" type="text" inputmode="url" required>
+            </div>
+            <div class="campo">
+                <label for="comparar-nombre1">Nombre (opcional)</label>
+                <input id="comparar-nombre1" name="nombre1" type="text" maxlength="60" placeholder="Sitio 1">
+            </div>
+            <div class="campo campo-doble">
+                <label for="comparar-url2">URL del segundo sitio</label>
+                <input id="comparar-url2" name="url2" type="text" inputmode="url" required>
+            </div>
+            <div class="campo">
+                <label for="comparar-nombre2">Nombre (opcional)</label>
+                <input id="comparar-nombre2" name="nombre2" type="text" maxlength="60" placeholder="Sitio 2">
+            </div>
+            <div class="campo campo-doble">
+                <label for="comparar-umbral">Similitud mínima de títulos: <output id="comparar-umbral-valor">60 %</output></label>
+                <input id="comparar-umbral" name="umbral" type="range" min="0.5" max="1" step="0.05" value="0.6">
+                <small>Más alto, menos coincidencias pero más fiables.</small>
+            </div>
+            <div class="acciones">
+                <button class="boton boton-primario" type="submit" id="comparar-enviar">Comparar</button>
+            </div>
+        </form>
+
+        <div class="salida" id="comparar-estado"></div>
+    </section>
+
+    <!-- ============================================================ Tareas -->
+    <section class="vista" id="vista-tareas" role="tabpanel" aria-labelledby="pestana-tareas" hidden>
+        <div class="vista-cabecera">
+            <div>
+                <h1>Tareas programadas</h1>
+                <p>Se ejecutan en segundo plano mientras el servidor esté encendido.</p>
+            </div>
+            <span id="tareas-programador"></span>
+        </div>
+
+        <form class="panel formulario" id="form-tarea" novalidate>
+            <div class="campo">
+                <label for="tarea-nombre">Nombre</label>
+                <input id="tarea-nombre" name="nombre" type="text" maxlength="100" required placeholder="Portátiles">
+            </div>
+            <div class="campo campo-doble">
+                <label for="tarea-url">URL</label>
+                <input id="tarea-url" name="url" type="text" inputmode="url" required>
+            </div>
+            <div class="campo">
+                <label for="tarea-intervalo">Cada (minutos)</label>
+                <input id="tarea-intervalo" name="intervalo_minutos" type="number" min="1" max="10080" value="60" required>
+            </div>
+            <div class="campo">
+                <label for="tarea-paginas">Páginas</label>
+                <input id="tarea-paginas" name="max_paginas" type="number" min="1" max="10" value="1" required>
+            </div>
+            <div class="acciones">
+                <button class="boton boton-primario" type="submit" id="tarea-enviar">Crear tarea</button>
+                <span id="tarea-mensaje" role="status"></span>
+            </div>
+        </form>
+
+        <div class="salida" id="tareas-lista"></div>
+    </section>
+
+    <!-- ============================================================ Estadísticas -->
+    <section class="vista" id="vista-estadisticas" role="tabpanel" aria-labelledby="pestana-estadisticas" hidden>
+        <div class="vista-cabecera">
+            <div>
+                <h1>Estadísticas</h1>
+                <p>Resumen de la base de datos y de las últimas ejecuciones.</p>
+            </div>
+            <button class="boton boton-secundario" type="button" id="estadisticas-actualizar">Actualizar</button>
+        </div>
+        <div class="salida" id="estadisticas-contenido"></div>
+    </section>
+</main>
+
+<dialog id="dialogo-historial" aria-labelledby="historial-titulo">
+    <div class="dialogo-cabecera">
+        <div>
+            <h2 id="historial-titulo"></h2>
+            <p class="texto-suave" id="historial-subtitulo"></p>
+        </div>
+        <button class="boton boton-secundario boton-pequeno" type="button" id="historial-cerrar">Cerrar</button>
+    </div>
+    <div class="dialogo-cuerpo" id="historial-cuerpo"></div>
+</dialog>
+</body>
+</html>

@@ -9,10 +9,14 @@ petición HTTP simple no basta. También se puede ejecutar como script:
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from colorama import Fore, Style, init
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 
 import config
@@ -70,10 +74,17 @@ class SeleniumScraper:
         opciones.add_experimental_option('excludeSwitches', ['enable-automation'])
         opciones.add_experimental_option('useAutomationExtension', False)
 
+        servicio = Service()
+        if sys.platform == 'win32' and hasattr(servicio, 'creation_flags'):
+            # En Windows, el Ctrl+C de la consola llega a todos sus procesos: mataría a
+            # chromedriver y dejaría Chrome abierto sin dueño. En su propio grupo de
+            # procesos lo ignora y lo cierra driver.quit(), que cierra también Chrome.
+            servicio.creation_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
         self.driver = None
         try:
             # Selenium Manager (incluido en selenium >= 4.6) localiza o descarga chromedriver
-            self.driver = webdriver.Chrome(options=opciones)
+            self.driver = webdriver.Chrome(service=servicio, options=opciones)
         except WebDriverException as e:
             print(f"{Fore.RED}✗ Error al iniciar navegador: {_mensaje(e)}")
             raise

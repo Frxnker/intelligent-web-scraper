@@ -13,11 +13,23 @@ from pathlib import Path
 
 from colorama import Fore, Style
 
-from config import DB_PATH
+from config import DB_PATH, RECURSOS_DIR
 from precios import parsear_precio
 
-SCHEMA_PATH = Path(__file__).resolve().parent / 'schema.sql'
+SCHEMA_PATH = RECURSOS_DIR / 'schema.sql'
 SCHEMA_VERSION = 1
+
+# Columnas permitidas para ordenar (nunca se interpola texto del usuario en el SQL)
+ORDENES_PRODUCTOS = {
+    'fecha': 'fecha_scraping',
+    'precio': 'precio',
+    'titulo': 'titulo COLLATE NOCASE',
+}
+
+
+def _escapar_like(texto: str) -> str:
+    """Escapa los comodines de LIKE para buscar el texto literal."""
+    return texto.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
 def _sentencias_sql(script: str) -> list[str]:
@@ -278,20 +290,70 @@ class ScraperDB:
             raise ValueError('limite debe ser mayor que 0')
         return limite
 
+    def consultar_productos(self, sitio=None, texto=None, precio_min=None, precio_max=None,
+                            orden='fecha', descendente=True, limite=50, desplazamiento=0) -> tuple[list[dict], int]:
+        """
+        Consulta productos con filtros, orden y paginación.
+
+        Args:
+            sitio: solo productos de este sitio.
+            texto: texto que debe aparecer en el título.
+            precio_min, precio_max: rango de precio (excluye los productos sin precio).
+            orden: 'fecha' (última vez visto), 'precio' o 'titulo'. Los productos sin
+                precio van siempre al final al ordenar por precio.
+            descendente: sentido del orden.
+            limite: máximo de filas (None = todas).
+            desplazamiento: filas a saltar (para paginar).
+
+        Returns:
+            (productos, total de productos que cumplen los filtros)
+        """
+        if orden not in ORDENES_PRODUCTOS:
+            raise ValueError(f"orden debe ser uno de: {', '.join(ORDENES_PRODUCTOS)}")
+        if int(desplazamiento) < 0:
+            raise ValueError('desplazamiento no puede ser negativo')
+
+        condiciones, parametros = [], []
+        if sitio:
+            condiciones.append('sitio = ?')
+            parametros.append(sitio)
+        if texto:
+            condiciones.append(r"titulo LIKE ? ESCAPE '\'")
+            parametros.append(f'%{_escapar_like(texto)}%')
+        if precio_min is not None:
+            condiciones.append('precio >= ?')
+            parametros.append(precio_min)
+        if precio_max is not None:
+            condiciones.append('precio <= ?')
+            parametros.append(precio_max)
+        where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ''
+
+        total = self.conn.execute(f'SELECT COUNT(*) FROM productos {where}', parametros).fetchone()[0]
+
+        columna = ORDENES_PRODUCTOS[orden]
+        sentido = 'DESC' if descendente else 'ASC'
+        orden_sql = f'{columna} {sentido}, id {sentido}'
+        if orden == 'precio':
+            orden_sql = f'precio IS NULL, {orden_sql}'
+        sql = f'SELECT * FROM productos {where} ORDER BY {orden_sql}'
+        if limite is not None:
+            sql += ' LIMIT ? OFFSET ?'
+            parametros = [*parametros, self._validar_limite(limite), int(desplazamiento)]
+
+        return [dict(fila) for fila in self.conn.execute(sql, parametros)], total
+
     def obtener_productos(self, sitio=None, limite=50) -> list[dict]:
         """Obtiene los productos más recientes, opcionalmente filtrados por sitio."""
-        limite = self._validar_limite(limite)
-        if sitio:
-            filas = self.conn.execute(
-                'SELECT * FROM productos WHERE sitio = ? ORDER BY fecha_scraping DESC, id DESC LIMIT ?',
-                (sitio, limite),
-            )
-        else:
-            filas = self.conn.execute(
-                'SELECT * FROM productos ORDER BY fecha_scraping DESC, id DESC LIMIT ?',
-                (limite,),
-            )
-        return [dict(fila) for fila in filas]
+        return self.consultar_productos(sitio=sitio, limite=self._validar_limite(limite))[0]
+
+    def columnas_productos(self) -> list[str]:
+        """Nombres de las columnas de la tabla productos, en orden."""
+        return [fila['name'] for fila in self.conn.execute('PRAGMA table_info(productos)')]
+
+    def obtener_producto(self, producto_id) -> dict | None:
+        """Devuelve un producto por id, o None si no existe."""
+        fila = self.conn.execute('SELECT * FROM productos WHERE id = ?', (producto_id,)).fetchone()
+        return dict(fila) if fila else None
 
     def obtener_historial_precios(self, producto_id) -> list[dict]:
         """Obtiene el historial de precios de un producto, del más reciente al más antiguo."""
@@ -305,14 +367,22 @@ class ScraperDB:
 
     def buscar_productos(self, query, limite=50) -> list[dict]:
         """Busca productos cuyo título contenga `query` (sin distinguir mayúsculas en ASCII)."""
-        limite = self._validar_limite(limite)
-        patron = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        return self.consultar_productos(texto=query, limite=self._validar_limite(limite))[0]
+
+    def precio_medio_por_moneda(self) -> list[dict]:
+        """Precio medio de los productos con precio, agrupado por moneda (None = sin moneda)."""
         filas = self.conn.execute(
-            r'''SELECT * FROM productos
-                WHERE titulo LIKE ? ESCAPE '\'
-                ORDER BY fecha_scraping DESC, id DESC
-                LIMIT ?''',
-            (f'%{patron}%', limite),
+            '''SELECT moneda, AVG(precio) AS media, COUNT(*) AS productos
+               FROM productos WHERE precio IS NOT NULL
+               GROUP BY moneda ORDER BY productos DESC'''
+        )
+        return [dict(fila) for fila in filas]
+
+    def obtener_ultimos_jobs(self, limite=10) -> list[dict]:
+        """Últimas ejecuciones de scraping registradas."""
+        filas = self.conn.execute(
+            'SELECT * FROM scraping_jobs ORDER BY fecha DESC, id DESC LIMIT ?',
+            (self._validar_limite(limite),),
         )
         return [dict(fila) for fila in filas]
 

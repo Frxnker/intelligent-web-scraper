@@ -7,11 +7,10 @@ Menú avanzado con todas las funcionalidades:
 """
 
 import sys
-import time
 
 from colorama import Fore, Style, init
 
-from utils import nombre_desde_url, normalizar_url
+from utils import normalizar_url
 
 # Inicializar colorama
 init(autoreset=True)
@@ -101,8 +100,7 @@ def menu_principal():
 
 def scrapear_simple():
     """Opción 1: Scraping simple de una página"""
-    from scraper import Scraper
-    from database import ScraperDB
+    from servicios import scrapear_y_guardar
 
     print(f"\n{Fore.CYAN}{'='*70}")
     print(f"{Fore.YELLOW}🌐 SCRAPING SIMPLE")
@@ -112,23 +110,14 @@ def scrapear_simple():
     if not url:
         return
 
-    inicio = time.time()
-    domain = nombre_desde_url(url)
-    with Scraper(headless=True) as scraper:
-        datos = scraper.scrapear_pagina_universal(url, domain)
-    
-    if datos:
-        with ScraperDB() as db:
-            guardados = db.insertar_productos_bulk(datos, domain)
-            duracion = time.time() - inicio
-            db.registrar_job(url, domain, len(datos), duracion=duracion)
-            print(f"{Fore.GREEN}✅ {guardados} productos guardados en la base de datos\n")
+    resultado = scrapear_y_guardar(url, 1)
+    if resultado.datos:
+        print(f"{Fore.GREEN}✅ {resultado.guardados} productos guardados en la base de datos\n")
+
 
 def scrapear_paginacion():
     """Opción 2: Scraping con paginación"""
-    from scraper import Scraper
-    from paginacion import scrapear_con_paginacion
-    from database import ScraperDB
+    from servicios import scrapear_y_guardar
 
     print(f"\n{Fore.CYAN}{'='*70}")
     print(f"{Fore.YELLOW}📄 SCRAPING CON PAGINACIÓN")
@@ -140,17 +129,9 @@ def scrapear_paginacion():
 
     max_pag = pedir_numero("¿Cuántas páginas scrapear? (1-10): ", 3, minimo=1, maximo=10)
 
-    inicio = time.time()
-    with Scraper(headless=True) as scraper:
-        datos = scrapear_con_paginacion(scraper, url, max_pag)
-
-    if datos:
-        with ScraperDB() as db:
-            domain = nombre_desde_url(url)
-            guardados = db.insertar_productos_bulk(datos, domain)
-            duracion = time.time() - inicio
-            db.registrar_job(url, domain, len(datos), duracion=duracion)
-            print(f"{Fore.GREEN}✅ {guardados} productos guardados en la base de datos\n")
+    resultado = scrapear_y_guardar(url, max_pag)
+    if resultado.datos:
+        print(f"{Fore.GREEN}✅ {resultado.guardados} productos guardados en la base de datos\n")
 
 def comparar_precios():
     """Opción 3: Comparar precios entre sitios"""
