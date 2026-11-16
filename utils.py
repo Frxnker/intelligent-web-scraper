@@ -1,170 +1,149 @@
 """
-Funciones auxiliares para el web scraper
+Funciones auxiliares: exportación de resultados y validación de URLs.
 """
+
+from __future__ import annotations
 
 import csv
 import json
-import os
-from typing import List, Dict
-from datetime import datetime
-from config import OUTPUT_DIR
-from colorama import Fore, Style
+import re
+from pathlib import Path
+from urllib.parse import urlparse
+
+from colorama import Fore
+
+import config
 
 
-def ensure_output_dir():
-    """Crea el directorio de salida si no existe"""
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-        print(f"{Fore.GREEN}✓ Directorio creado: {OUTPUT_DIR}")
+def ensure_output_dir() -> Path:
+    """Crea el directorio de salida si no existe y lo devuelve."""
+    salida = Path(config.OUTPUT_DIR)
+    salida.mkdir(parents=True, exist_ok=True)
+    return salida
 
 
-def export_to_csv(data: List[Dict], filename: str):
-    """
-    Exporta datos a un archivo CSV
-    
-    Args:
-        data: Lista de diccionarios con los datos
-        filename: Nombre del archivo de salida
-    """
-    ensure_output_dir()
-    
-    filepath = os.path.join(OUTPUT_DIR, filename)
-    
+def _campos(data: list[dict]) -> list[str]:
+    """Une las claves de todos los registros conservando el orden de aparición."""
+    campos: dict[str, None] = {}
+    for fila in data:
+        campos.update(dict.fromkeys(fila))
+    return list(campos)
+
+
+def export_to_csv(data: list[dict], filename: str) -> Path | None:
+    """Exporta una lista de diccionarios a output/<filename>. Devuelve la ruta o None."""
     if not data:
         print(f"{Fore.YELLOW}⚠ No hay datos para exportar")
-        return
-    
+        return None
+
+    filepath = ensure_output_dir() / filename
     try:
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=data[0].keys())
+            writer = csv.DictWriter(f, fieldnames=_campos(data), restval='N/A')
             writer.writeheader()
             writer.writerows(data)
-        
-        print(f"{Fore.GREEN}✓ Datos exportados a: {filepath}")
-        print(f"{Fore.CYAN}📊 Total de registros: {len(data)}")
-    except Exception as e:
-        print(f"{Fore.RED}✗ Error al exportar CSV: {str(e)}")
+    except OSError as e:
+        print(f"{Fore.RED}✗ Error al exportar CSV a {filepath}: {e}")
+        return None
+
+    print(f"{Fore.GREEN}✓ Datos exportados a: {filepath}")
+    return filepath
 
 
-def export_to_json(data: List[Dict], filename: str):
-    """
-    Exporta datos a un archivo JSON
-    
-    Args:
-        data: Lista de diccionarios con los datos
-        filename: Nombre del archivo de salida
-    """
-    ensure_output_dir()
-    
-    filepath = os.path.join(OUTPUT_DIR, filename)
-    
+def export_to_json(data: list[dict], filename: str) -> Path | None:
+    """Exporta una lista de diccionarios a output/<filename>. Devuelve la ruta o None."""
     if not data:
         print(f"{Fore.YELLOW}⚠ No hay datos para exportar")
-        return
-    
+        return None
+
+    filepath = ensure_output_dir() / filename
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        print(f"{Fore.GREEN}✓ Datos exportados a: {filepath}")
-        print(f"{Fore.CYAN}📊 Total de registros: {len(data)}")
-    except Exception as e:
-        print(f"{Fore.RED}✗ Error al exportar JSON: {str(e)}")
+    except (OSError, TypeError) as e:
+        print(f"{Fore.RED}✗ Error al exportar JSON a {filepath}: {e}")
+        return None
+
+    print(f"{Fore.GREEN}✓ Datos exportados a: {filepath}")
+    return filepath
 
 
-def generate_filename(prefix: str, extension: str = 'csv') -> str:
-    """
-    Genera un nombre de archivo con timestamp
-    
-    Args:
-        prefix: Prefijo del nombre del archivo
-        extension: Extensión del archivo
-        
-    Returns:
-        Nombre del archivo generado
-    """
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    return f"{prefix}_{timestamp}.{extension}"
+def guardar_html(html: str, filename: str) -> Path | None:
+    """Guarda el HTML de la página en output/<filename> para poder revisarlo."""
+    filepath = ensure_output_dir() / filename
+    try:
+        filepath.write_text(html, encoding='utf-8')
+    except OSError as e:
+        print(f"{Fore.RED}✗ Error al guardar el HTML en {filepath}: {e}")
+        return None
+    print(f"{Fore.GREEN}✓ HTML guardado en: {filepath}")
+    return filepath
 
 
-def print_data_summary(data: List[Dict]):
-    """
-    Imprime un resumen de los datos scrapeados
-    
-    Args:
-        data: Lista de diccionarios con los datos
-    """
-    if not data:
-        print(f"{Fore.YELLOW}⚠ No hay datos para mostrar")
-        return
-    
-    print(f"\n{Fore.CYAN}{'='*60}")
-    print(f"{Fore.CYAN}📊 RESUMEN DE DATOS")
-    print(f"{Fore.CYAN}{'='*60}")
-    print(f"{Fore.WHITE}Total de registros: {Fore.GREEN}{len(data)}")
-    print(f"{Fore.WHITE}Campos disponibles: {Fore.GREEN}{', '.join(data[0].keys())}")
-    
-    print(f"\n{Fore.CYAN}🔍 Primeros 3 registros:")
-    print(f"{Fore.CYAN}{'-'*60}")
-    
-    for i, item in enumerate(data[:3], 1):
-        print(f"{Fore.YELLOW}Registro {i}:")
-        for key, value in item.items():
-            # Truncar valores largos
-            display_value = str(value)[:100] + '...' if len(str(value)) > 100 else value
-            print(f"  {Fore.WHITE}{key}: {Fore.GREEN}{display_value}")
+def guardar_resultados(datos: list[dict], nombre_base: str, html: str | None = None):
+    """Guarda el HTML (si lo hay) y exporta los datos a CSV y JSON."""
+    if html:
+        guardar_html(html, f"{nombre_base}.html")
+    if datos:
+        export_to_csv(datos, f"{nombre_base}.csv")
+        export_to_json(datos, f"{nombre_base}.json")
+        print(f"{Fore.CYAN}📊 Total de registros: {len(datos)}\n")
+
+
+def mostrar_muestra(datos: list[dict], cantidad: int = 5):
+    """Muestra los primeros elementos extraídos."""
+    for dato in datos[:cantidad]:
+        print(f"{Fore.YELLOW}Elemento #{dato.get('numero', '?')}")
+        print(f"{Fore.WHITE}  📝 {str(dato.get('titulo', 'N/A'))[:65]}")
+        if dato.get('precio', 'N/A') != 'N/A':
+            print(f"{Fore.GREEN}  💰 {dato['precio']}")
         print()
-    
-    print(f"{Fore.CYAN}{'='*60}\n")
+    if len(datos) > cantidad:
+        print(f"{Fore.CYAN}... y {len(datos) - cantidad} elementos más\n")
 
 
-def clean_text(text: str) -> str:
+def guardar_y_mostrar(datos: list[dict], nombre_base: str, html: str | None = None):
+    """Guarda los resultados de una página y muestra una muestra por consola."""
+    guardar_resultados(datos, nombre_base, html)
+    if datos:
+        mostrar_muestra(datos)
+        return
+    print(f"{Fore.YELLOW}⚠️  No se encontraron elementos estructurados")
+    if html:
+        print(f"{Fore.CYAN}💡 Revisa output/{nombre_base}.html para ver la estructura de la página\n")
+
+
+def normalizar_url(texto: str) -> str | None:
     """
-    Limpia un texto eliminando espacios extras y caracteres especiales
-    
-    Args:
-        text: Texto a limpiar
-        
-    Returns:
-        Texto limpio
+    Valida una URL introducida por el usuario.
+
+    Añade https:// si no lleva esquema. Devuelve None si no es una URL
+    http(s) con dominio.
     """
-    if not text:
-        return ''
-    
-    # Eliminar espacios extras
-    text = ' '.join(text.split())
-    
-    # Eliminar caracteres especiales comunes
-    text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-    
-    return text.strip()
+    texto = (texto or '').strip()
+    if not texto:
+        return None
+    if '://' not in texto:
+        texto = 'https://' + texto
+    try:
+        partes = urlparse(texto)
+        hostname = partes.hostname
+    except ValueError:  # p. ej. "https://[::1" (IPv6 mal cerrada)
+        return None
+    if partes.scheme not in ('http', 'https') or not hostname or ' ' in partes.netloc:
+        return None
+    return texto
 
 
-def validate_url(url: str) -> bool:
-    """
-    Valida si una URL tiene un formato correcto
-    
-    Args:
-        url: URL a validar
-        
-    Returns:
-        True si la URL es válida, False en caso contrario
-    """
-    if not url:
-        return False
-    
-    return url.startswith('http://') or url.startswith('https://')
+def nombre_desde_url(url: str) -> str:
+    """Nombre seguro para archivos a partir del dominio: 'www.amazon.es' -> 'amazon_es'."""
+    netloc = urlparse(url).netloc.rsplit('@', 1)[-1]  # sin usuario:contraseña
+    dominio = netloc.lower().removeprefix('www.')
+    nombre = re.sub(r'[^a-z0-9_-]+', '_', dominio).strip('_')
+    return nombre or 'pagina'
 
 
-def print_banner():
-    """Imprime un banner de bienvenida"""
-    banner = f"""
-{Fore.CYAN}╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║              🌐  WEB SCRAPER PROJECT  🌐                 ║
-║                                                          ║
-║            Powered by BeautifulSoup & Requests           ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝{Style.RESET_ALL}
-    """
-    print(banner)
+def truncar(texto: str, longitud: int) -> str:
+    """Recorta un texto añadiendo '...' solo si hace falta."""
+    texto = str(texto)
+    return texto if len(texto) <= longitud else texto[:longitud] + '...'

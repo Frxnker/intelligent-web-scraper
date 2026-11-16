@@ -1,279 +1,181 @@
-// ============================================================================
-// WEB SCRAPER - JAVASCRIPT SCRIPTS
-// Colección de scripts JavaScript para extracción optimizada de datos
-// ============================================================================
-
-// ----------------------------------------------------------------------------
-// SCRIPTS GENÉRICOS DE UTILIDAD
-// ----------------------------------------------------------------------------
-
-/**
- * Detecta cuando la página ha cargado completamente
- * Incluye soporte para jQuery y AJAX
+/*
+ * Scripts que Selenium ejecuta dentro del navegador.
+ *
+ * Este archivo no se incluye en ninguna página. js_scripts.py lo lee entero y
+ * le añade al final
+ *
+ *     return WebScraperJS.<funcion>.apply(null, arguments);
+ *
+ * para ejecutarlo con driver.execute_script(). Por eso todo lo que haya aquí
+ * vive dentro de la función que crea Selenium y no ensucia la página.
+ *
+ * Las funciones de extracción devuelven una lista de objetos con las claves
+ * titulo, precio, descripcion, enlace e imagen. La numeración y el valor
+ * 'N/A' de los campos vacíos los añade Python (extractor.normalizar_items).
  */
-function detectarCargaCompleta() {
-    return new Promise((resolve) => {
-        if (document.readyState === 'complete') {
-            if (typeof jQuery !== 'undefined' && jQuery.active > 0) {
-                setTimeout(() => resolve(true), 500);
-            } else {
-                resolve(true);
-            }
-        } else {
-            window.addEventListener('load', () => {
-                setTimeout(() => resolve(true), 500);
-            });
-        }
-    });
+
+function limpiarTexto(texto) {
+    return texto ? texto.trim().replace(/\s+/g, ' ') : '';
 }
 
-/**
- * Scroll automático hasta el final de la página
- * Útil para cargar contenido lazy-loaded
- */
-async function scrollInfinito() {
-    let alturaAnterior = 0;
-    let intentos = 0;
-    const maxIntentos = 5;
+function textoDe(raiz, selector) {
+    const elemento = raiz.querySelector(selector);
+    return elemento ? limpiarTexto(elemento.textContent) : '';
+}
 
-    while (intentos < maxIntentos) {
-        window.scrollTo(0, document.body.scrollHeight);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const alturaActual = document.body.scrollHeight;
-        if (alturaActual === alturaAnterior) {
-            intentos++;
-        } else {
-            intentos = 0;
-            alturaAnterior = alturaActual;
-        }
+function enlaceDe(raiz, selector) {
+    const enlace = raiz.querySelector(selector || 'a[href]');
+    return enlace ? enlace.href : '';
+}
+
+function imagenDe(raiz) {
+    const imagen = raiz.querySelector('img');
+    if (!imagen) {
+        return '';
     }
-    
-    window.scrollTo(0, 0);
-    return true;
+    return imagen.currentSrc || imagen.src || imagen.dataset.src || '';
 }
 
-/**
- * Cuenta elementos en la página
- */
-function contarElementos() {
-    return {
-        enlaces: document.querySelectorAll('a').length,
-        imagenes: document.querySelectorAll('img').length,
-        productos: document.querySelectorAll('[class*="product"], [class*="item"]').length,
-        articulos: document.querySelectorAll('article').length,
-        parrafos: document.querySelectorAll('p').length
-    };
-}
+// ---------------------------------------------------------------------------
+// Utilidades
+// ---------------------------------------------------------------------------
 
 /**
- * Remueve overlays, popups y modales
+ * Elimina avisos de cookies, newsletters y modales que tapan el contenido.
+ * Solo quita los elementos con posición fija o absoluta.
+ * Devuelve cuántos elementos se han eliminado.
  */
 function removerOverlays() {
     const selectores = [
-        '[class*="modal"]',
-        '[class*="popup"]',
-        '[class*="overlay"]',
-        '[class*="cookie"]',
-        '[class*="newsletter"]',
-        '[id*="modal"]',
-        '[id*="popup"]'
+        '.modal', '.popup', '.overlay',
+        '[class*="cookie" i]', '[id*="cookie" i]',
+        '[class*="newsletter" i]', '[id*="newsletter" i]',
+        '.gdpr', '#gdpr',
+        '[class*="consent" i]'
     ];
-    
+
+    let removidos = 0;
     selectores.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => {
-            if (el && (el.style.position === 'fixed' || el.style.position === 'absolute')) {
-                el.remove();
+        document.querySelectorAll(selector).forEach(elemento => {
+            const posicion = window.getComputedStyle(elemento).position;
+            if (posicion === 'fixed' || posicion === 'absolute') {
+                elemento.remove();
+                removidos++;
             }
         });
     });
-    
-    document.body.style.overflow = 'auto';
-    return true;
+
+    // Algunos avisos bloquean el scroll de la página
+    if (document.body) {
+        document.body.style.overflow = 'auto';
+    }
+    return removidos;
 }
 
-/**
- * Obtiene metadata de la página
- */
-function obtenerMetadata() {
-    return {
-        titulo: document.title,
-        url: window.location.href,
-        dominio: window.location.hostname,
-        descripcion: document.querySelector('meta[name="description"]')?.content || '',
-        idioma: document.documentElement.lang || 'unknown',
-        charset: document.characterSet,
-        generador: document.querySelector('meta[name="generator"]')?.content || 'unknown'
-    };
-}
+// ---------------------------------------------------------------------------
+// Extracción específica por sitio
+// ---------------------------------------------------------------------------
 
-// ----------------------------------------------------------------------------
-// SCRIPTS ESPECÍFICOS POR SITIO E-COMMERCE
-// ----------------------------------------------------------------------------
-
-/**
- * Extracción para PcComponentes
- */
 function extraerPcComponentes() {
-    const productos = [];
-    const elementos = document.querySelectorAll('[data-product-name], .tarjeta-articulo, [class*="product"]');
-    
-    elementos.forEach(el => {
-        const nombre = el.getAttribute('data-product-name') || 
-                      el.querySelector('[class*="name"], h3, h4')?.textContent.trim();
-        const precio = el.getAttribute('data-product-price') || 
-                      el.querySelector('[class*="price"]')?.textContent.trim();
-        const url = el.querySelector('a')?.href;
-        const imagen = el.querySelector('img')?.src;
-        
-        if (nombre && precio) {
-            productos.push({ nombre, precio, url, imagen });
+    const datos = [];
+    document.querySelectorAll('[data-product-name]').forEach(producto => {
+        const titulo = producto.dataset.productName || textoDe(producto, 'h3, h2');
+        if (!titulo) {
+            return;
         }
+        datos.push({
+            titulo: titulo,
+            precio: producto.dataset.productPrice || textoDe(producto, '[class*="precio" i]'),
+            descripcion: '',
+            enlace: producto.href || enlaceDe(producto),
+            imagen: imagenDe(producto)
+        });
     });
-    
-    return productos;
+    return datos;
 }
 
-/**
- * Extracción para Amazon
- */
 function extraerAmazon() {
-    const productos = [];
-    const elementos = document.querySelectorAll('[data-asin], [data-component-type="s-search-result"]');
-    
-    elementos.forEach(el => {
-        const nombre = el.querySelector('h2, .a-text-normal')?.textContent.trim();
-        const precioEntero = el.querySelector('.a-price-whole')?.textContent.trim();
-        const precioDecimal = el.querySelector('.a-price-fraction')?.textContent.trim();
-        const precio = precioEntero && precioDecimal ? `${precioEntero}${precioDecimal}` : null;
-        const url = el.querySelector('h2 a, .a-link-normal')?.href;
-        const imagen = el.querySelector('img')?.src;
-        
-        if (nombre && precio) {
-            productos.push({ nombre, precio, url, imagen });
+    const datos = [];
+    document.querySelectorAll('[data-asin]:not([data-asin=""])').forEach(producto => {
+        const titulo = textoDe(producto, 'h2') || textoDe(producto, '.a-text-normal');
+        if (titulo.length <= 3) {
+            return;
         }
+        // .a-price-whole ya incluye el separador decimal ("1.299," o "1,299.")
+        const entero = textoDe(producto, '.a-price-whole');
+        const decimales = textoDe(producto, '.a-price-fraction');
+        const simbolo = textoDe(producto, '.a-price-symbol');
+        datos.push({
+            titulo: titulo,
+            precio: entero ? `${entero}${decimales}${simbolo}` : '',
+            descripcion: '',
+            enlace: enlaceDe(producto, 'h2 a') || enlaceDe(producto, 'a.a-link-normal'),
+            imagen: imagenDe(producto)
+        });
     });
-    
-    return productos;
+    return datos;
 }
 
-/**
- * Extracción para eBay
- */
 function extraerEbay() {
-    const productos = [];
-    const elementos = document.querySelectorAll('.s-item, .lvresult');
-    
-    elementos.forEach(el => {
-        const nombre = el.querySelector('.s-item__title, h3')?.textContent.trim();
-        const precio = el.querySelector('.s-item__price, .lvprice')?.textContent.trim();
-        const url = el.querySelector('a')?.href;
-        const imagen = el.querySelector('img')?.src;
-        
-        if (nombre && precio && !nombre.includes('Shop on eBay')) {
-            productos.push({ nombre, precio, url, imagen });
+    const datos = [];
+    document.querySelectorAll('.s-item, .lvresult').forEach(producto => {
+        const titulo = textoDe(producto, '.s-item__title, h3');
+        if (!titulo || titulo === 'Shop on eBay') {
+            return;
         }
+        datos.push({
+            titulo: titulo,
+            precio: textoDe(producto, '.s-item__price, .lvprice'),
+            descripcion: '',
+            enlace: enlaceDe(producto, '.s-item__link, a[href]'),
+            imagen: imagenDe(producto)
+        });
     });
-    
-    return productos;
+    return datos;
 }
 
-/**
- * Extracción para AliExpress
- */
 function extraerAliExpress() {
-    const productos = [];
-    const elementos = document.querySelectorAll('[data-product-id], .product-item, [class*="list--item"]');
-    
-    elementos.forEach(el => {
-        const nombre = el.querySelector('[class*="title"], h1, h2, h3')?.textContent.trim();
-        const precio = el.querySelector('[class*="price"]')?.textContent.trim();
-        const url = el.querySelector('a')?.href;
-        const imagen = el.querySelector('img')?.src;
-        
-        if (nombre && precio) {
-            productos.push({ nombre, precio, url, imagen });
+    const datos = [];
+    document.querySelectorAll('[data-product-id], .product-item, .list-item').forEach(producto => {
+        const titulo = textoDe(producto, 'h1, h2, h3, .product-title');
+        if (!titulo) {
+            return;
         }
+        datos.push({
+            titulo: titulo,
+            precio: textoDe(producto, '[class*="price" i]'),
+            descripcion: '',
+            enlace: enlaceDe(producto),
+            imagen: imagenDe(producto)
+        });
     });
-    
-    return productos;
+    return datos;
 }
 
-/**
- * Extracción para blogs WordPress
- */
-function extraerWordPressBlog() {
-    const articulos = [];
-    const elementos = document.querySelectorAll('article, .post, .entry');
-    
-    elementos.forEach(el => {
-        const titulo = el.querySelector('h1, h2, .entry-title')?.textContent.trim();
-        const extracto = el.querySelector('.entry-summary, .excerpt, p')?.textContent.trim();
-        const url = el.querySelector('a')?.href;
-        const fecha = el.querySelector('time, .published')?.textContent.trim();
-        const autor = el.querySelector('.author, .by-author')?.textContent.trim();
-        
-        if (titulo) {
-            articulos.push({ titulo, extracto, url, fecha, autor });
+function extraerWordPress() {
+    const datos = [];
+    document.querySelectorAll('article, .post, .entry').forEach(articulo => {
+        const titulo = textoDe(articulo, 'h2, h1, .entry-title');
+        if (!titulo) {
+            return;
         }
+        datos.push({
+            titulo: titulo,
+            precio: '',
+            descripcion: textoDe(articulo, '.entry-summary, .excerpt, p').substring(0, 150),
+            enlace: enlaceDe(articulo, 'a[rel="bookmark"], .entry-title a'),
+            imagen: imagenDe(articulo)
+        });
     });
-    
-    return articulos;
+    return datos;
 }
 
-// ----------------------------------------------------------------------------
-// DETECCIÓN AUTOMÁTICA DE TIPO DE SITIO
-// ----------------------------------------------------------------------------
-
-/**
- * Detecta el tipo de sitio web
- */
-function detectarTipoSitio() {
-    const url = window.location.hostname.toLowerCase();
-    const contenido = document.body.innerHTML.toLowerCase();
-    
-    // E-commerce
-    if (url.includes('amazon') || contenido.includes('add to cart') || 
-        contenido.includes('añadir al carrito') || document.querySelector('[class*="cart"]')) {
-        return 'ecommerce';
-    }
-    
-    // Blog
-    if (document.querySelectorAll('article').length > 2 || 
-        contenido.includes('wordpress') || document.querySelector('.wp-')) {
-        return 'blog';
-    }
-    
-    // Noticias
-    if (url.includes('news') || url.includes('noticia') || 
-        document.querySelectorAll('article').length > 5) {
-        return 'noticias';
-    }
-    
-    // Foro
-    if (url.includes('forum') || url.includes('foro') || 
-        document.querySelector('[class*="thread"], [class*="topic"]')) {
-        return 'foro';
-    }
-    
-    return 'general';
-}
-
-// ----------------------------------------------------------------------------
-// EXPORTAR PARA USO EN PYTHON
-// ----------------------------------------------------------------------------
-
-// Este objeto se puede acceder desde Python usando execute_script
-window.WebScraperJS = {
-    detectarCargaCompleta,
-    scrollInfinito,
-    contarElementos,
+// Funciones que se pueden llamar desde Python (js_scripts.py)
+const WebScraperJS = {
     removerOverlays,
-    obtenerMetadata,
     extraerPcComponentes,
     extraerAmazon,
     extraerEbay,
     extraerAliExpress,
-    extraerWordPressBlog,
-    detectarTipoSitio
+    extraerWordPress
 };

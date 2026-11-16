@@ -1,156 +1,118 @@
 """
-Módulo de paginación automática para scrapear múltiples páginas
+Scraping de varias páginas de un listado.
+
+Las URLs de las páginas siguientes se generan con un parámetro de página en la
+query string (?page=2, ?p=2, ?pg=2 o ?pagina=2; si la URL no trae ninguno se
+añade ?page=N). Si el sitio pagina de otra forma, el parámetro se ignora y el
+servidor devuelve la misma página: en ese caso la paginación se detiene en
+cuanto una página no aporta elementos nuevos.
 """
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from colorama import Fore, Style
+
+from __future__ import annotations
+
 import time
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from colorama import Fore
+
+from config import DELAY_BETWEEN_REQUESTS
+from utils import nombre_desde_url
+
+PARAMETROS_PAGINA = ('page', 'p', 'pg', 'pagina')
+
 
 class Paginador:
-    """Gestiona la paginación automática para scrapear múltiples páginas"""
-    
-    @staticmethod
-    def detectar_tipo_paginacion(url, soup):
-        """
-        Detecta el tipo de paginación del sitio
-        Retorna: 'query_param', 'path', 'next_link', o None
-        """
-        # Buscar enlaces de "siguiente" o paginación
-        next_links = soup.find_all('a', text=lambda x: x and ('siguiente' in str(x).lower() or 'next' in str(x).lower()))
-        if next_links:
-            return 'next_link'
-        
-        # Buscar parámetros de paginación en la URL
-        parsed = urlparse(url)
-        params = parse_qs(parsed.query)
-        
-        # Parámetros comunes de paginación
-        page_params = ['page', 'p', 'pg', 'pagina', 'offset', 'start']
-        for param in page_params:
-            if param in params:
-                return 'query_param'
-        
-        return None
-    
-    @staticmethod
-    def generar_urls_paginadas(url_base, max_paginas=5):
-        """
-        Genera URLs para múltiples páginas
-        """
-        urls = [url_base]
-        parsed = urlparse(url_base)
-        params = parse_qs(parsed.query)
-        
-        # Detectar parámetro de página
-        page_param = None
-        page_params = ['page', 'p', 'pg', 'pagina']
-        for param in page_params:
-            if param in params:
-                page_param = param
-                break
-        
-        if not page_param:
-            # Si no hay parámetro, agregar uno
-            page_param = 'page'
-        
-        # Generar URLs
-        for i in range(2, max_paginas + 1):
-            params_copy = params.copy()
-            params_copy[page_param] = [str(i)]
-            
-            nueva_query = urlencode(params_copy, doseq=True)
-            nueva_url = urlunparse((
-                parsed.scheme,
-                parsed.netloc,
-                parsed.path,
-                parsed.params,
-                nueva_query,
-                parsed.fragment
-            ))
-            urls.append(nueva_url)
-        
-        return urls
-    
-    @staticmethod
-    def obtener_url_siguiente(soup, url_actual):
-        """
-        Busca el enlace a la página siguiente en el HTML
-        """
-        # Buscar enlaces comunes de "siguiente"
-        selectores = [
-            ('a', {'class': lambda x: x and ('next' in str(x).lower() or 'siguiente' in str(x).lower())}),
-            ('a', {'rel': 'next'}),
-            ('a', {'aria-label': lambda x: x and 'next' in str(x).lower()}),
-        ]
-        
-        for tag, attrs in selectores:
-            link = soup.find(tag, attrs=attrs)
-            if link and link.get('href'):
-                href = link['href']
-                # Convertir a URL absoluta si es relativa
-                if href.startswith('/'):
-                    from urllib.parse import urljoin
-                    return urljoin(url_actual, href)
-                return href
-        
-        return None
+    """Generación de URLs paginadas."""
 
-def scrapear_con_paginacion(scraper, url_base, max_paginas=5, delay=2):
+    @staticmethod
+    def generar_urls_paginadas(url_base, max_paginas=5) -> list[str]:
+        """
+        Genera las URLs de `max_paginas` páginas empezando por url_base.
+
+        Si url_base ya trae un número de página (?page=3) se continúa desde ahí.
+        """
+        if max_paginas < 1:
+            return []
+
+        partes = urlparse(url_base)
+        params = parse_qs(partes.query, keep_blank_values=True)
+        parametro = next((p for p in PARAMETROS_PAGINA if p in params), 'page')
+        valor_actual = params.get(parametro, ['1'])[0]
+        pagina_inicial = int(valor_actual) if valor_actual.isdigit() else 1
+
+        urls = [url_base]
+        for pagina in range(pagina_inicial + 1, pagina_inicial + max_paginas):
+            nuevos_params = {**params, parametro: [str(pagina)]}
+            urls.append(urlunparse(partes._replace(query=urlencode(nuevos_params, doseq=True))))
+        return urls
+
+
+def _clave(dato: dict) -> tuple:
+    """Identificador de un elemento para detectar repetidos entre páginas."""
+    enlace = dato.get('enlace')
+    if enlace and enlace != 'N/A':
+        return ('enlace', enlace)
+    return ('contenido', dato.get('titulo'), dato.get('precio'))
+
+
+def scrapear_con_paginacion(scraper, url_base, max_paginas=5, delay=DELAY_BETWEEN_REQUESTS, nombre_base=None):
     """
-    Scrapea múltiples páginas automáticamente
-    
+    Scrapea varias páginas seguidas.
+
     Args:
-        scraper: Instancia del scraper (SeleniumScraper o WebScraper)
-        url_base: URL de la primera página
-        max_paginas: Número máximo de páginas a scrapear
-        delay: Tiempo de espera entre páginas (segundos)
-    
+        scraper: instancia con scrapear_pagina_universal(url, nombre) (Scraper o SeleniumScraper).
+        url_base: URL de la primera página.
+        max_paginas: número máximo de páginas a scrapear.
+        delay: pausa entre páginas en segundos, para no sobrecargar el servidor.
+        nombre_base: prefijo de los archivos generados (por defecto, el dominio).
+
     Returns:
-        Lista con todos los datos scrapeados
+        Lista con los elementos de todas las páginas, sin repetidos.
     """
-    print(f"\n{Fore.CYAN}{'='*70}")
+    print(f"\n{Fore.CYAN}{'=' * 70}")
     print(f"{Fore.YELLOW}📄 SCRAPING CON PAGINACIÓN")
-    print(f"{Fore.CYAN}{'='*70}\n")
+    print(f"{Fore.CYAN}{'=' * 70}\n")
     print(f"{Fore.WHITE}🔗 URL base: {url_base}")
     print(f"{Fore.WHITE}📊 Páginas máximas: {max_paginas}\n")
-    
-    todos_los_datos = []
+
+    nombre_base = nombre_base or nombre_desde_url(url_base)
     urls = Paginador.generar_urls_paginadas(url_base, max_paginas)
-    
-    for i, url in enumerate(urls[:max_paginas], 1):
-        print(f"{Fore.CYAN}📄 Scrapeando página {i}/{min(len(urls), max_paginas)}...")
+    todos_los_datos, vistos = [], set()
+    paginas_scrapeadas = 0
+
+    for i, url in enumerate(urls, 1):
+        print(f"{Fore.CYAN}📄 Scrapeando página {i}/{len(urls)}...")
         print(f"{Fore.WHITE}   URL: {url}\n")
-        
+
         try:
-            # Scrapear la página
-            if hasattr(scraper, 'scrapear_pagina_universal'):
-                # Selenium scraper
-                datos = scraper.scrapear_pagina_universal(url, f'pagina_{i}')
-            else:
-                # Basic scraper
-                soup = scraper.get_soup(url)
-                datos = []  # Implementar lógica básica si es necesario
-            
-            if datos:
-                todos_los_datos.extend(datos)
-                print(f"{Fore.GREEN}✅ Página {i}: {len(datos)} elementos encontrados")
-                print(f"{Fore.CYAN}   Total acumulado: {len(todos_los_datos)}\n")
-            else:
-                print(f"{Fore.YELLOW}⚠️  Página {i}: Sin datos, deteniendo paginación\n")
-                break
-            
-            # Esperar entre páginas para no sobrecargar el servidor
-            if i < min(len(urls), max_paginas):
-                print(f"{Fore.CYAN}⏳ Esperando {delay} segundos...\n")
-                time.sleep(delay)
-                
-        except Exception as e:
-            print(f"{Fore.RED}❌ Error en página {i}: {str(e)}\n")
+            datos = scraper.scrapear_pagina_universal(url, f'{nombre_base}_pagina_{i}')
+        except Exception as e:  # noqa: BLE001 - se conservan las páginas ya obtenidas
+            print(f"{Fore.RED}❌ Error en página {i}: {e}\n")
             break
-    
-    print(f"{Fore.GREEN}{'='*70}")
+        paginas_scrapeadas = i
+
+        if not datos:
+            print(f"{Fore.YELLOW}⚠️  Página {i}: sin datos, deteniendo paginación\n")
+            break
+
+        nuevos = [d for d in datos if _clave(d) not in vistos]
+        if not nuevos:
+            print(f"{Fore.YELLOW}⚠️  Página {i}: no aporta elementos nuevos (el sitio probablemente "
+                  f"no usa este parámetro de página), deteniendo paginación\n")
+            break
+        vistos.update(_clave(d) for d in nuevos)
+        todos_los_datos.extend(nuevos)
+        print(f"{Fore.GREEN}✅ Página {i}: {len(nuevos)} elementos nuevos")
+        print(f"{Fore.CYAN}   Total acumulado: {len(todos_los_datos)}\n")
+
+        if i < len(urls):
+            print(f"{Fore.CYAN}⏳ Esperando {delay} segundos...\n")
+            time.sleep(delay)
+
+    print(f"{Fore.GREEN}{'=' * 70}")
     print(f"{Fore.GREEN}✅ PAGINACIÓN COMPLETADA")
-    print(f"{Fore.GREEN}{'='*70}")
+    print(f"{Fore.GREEN}{'=' * 70}")
     print(f"{Fore.WHITE}📊 Total de elementos: {len(todos_los_datos)}")
-    print(f"{Fore.WHITE}📄 Páginas scrapeadas: {i}/{max_paginas}\n")
-    
+    print(f"{Fore.WHITE}📄 Páginas scrapeadas: {paginas_scrapeadas}/{len(urls)}\n")
+
     return todos_los_datos

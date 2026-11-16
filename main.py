@@ -6,12 +6,62 @@ Menú avanzado con todas las funcionalidades:
 - Programación de tareas
 """
 
-from colorama import Fore, Style, init
 import sys
-from urllib.parse import urlparse
+import time
+
+from colorama import Fore, Style, init
+
+from utils import nombre_desde_url, normalizar_url
 
 # Inicializar colorama
 init(autoreset=True)
+
+
+def pedir_url(mensaje):
+    """Pide una URL. Devuelve None si se deja vacía o no es válida."""
+    texto = input(f"{Fore.GREEN}{mensaje}{Style.RESET_ALL}").strip()
+    if not texto:
+        return None
+    url = normalizar_url(texto)
+    if url is None:
+        print(f"{Fore.RED}✗ URL no válida: {texto}")
+    return url
+
+
+def pedir_numero(mensaje, por_defecto, minimo=None, maximo=None, tipo=int):
+    """
+    Pide un número. Si se deja vacío devuelve el valor por defecto; si no es
+    un número válido avisa y usa el valor por defecto; si está fuera de rango
+    lo ajusta al límite más cercano.
+    """
+    texto = input(f"{Fore.GREEN}{mensaje}{Style.RESET_ALL}").strip()
+    if not texto:
+        return por_defecto
+    try:
+        valor = tipo(texto.replace(',', '.') if tipo is float else texto)
+    except ValueError:
+        print(f"{Fore.YELLOW}⚠️  '{texto}' no es un número válido, se usa {por_defecto}")
+        return por_defecto
+    ajustado = valor
+    if minimo is not None:
+        ajustado = max(minimo, ajustado)
+    if maximo is not None:
+        ajustado = min(maximo, ajustado)
+    if ajustado != valor:
+        print(f"{Fore.YELLOW}⚠️  Valor fuera de rango, se usa {ajustado}")
+    return ajustado
+
+
+def mostrar_producto(p, truncar_titulo=True):
+    """Imprime un producto guardado en la base de datos."""
+    from precios import formatear_precio
+
+    titulo = p['titulo'][:60] if truncar_titulo else p['titulo']
+    print(f"{Fore.WHITE}{p['id']}. {titulo}")
+    print(f"   💰 {formatear_precio(p['precio'], p['moneda'], p['precio_texto'])}")
+    print(f"   🏪 Sitio: {p['sitio']}")
+    print(f"   📅 {p['fecha_scraping']}\n")
+
 
 def print_banner():
     """Banner principal"""
@@ -51,27 +101,21 @@ def menu_principal():
 
 def scrapear_simple():
     """Opción 1: Scraping simple de una página"""
-    from scraper_selenium import SeleniumScraper
+    from scraper import Scraper
     from database import ScraperDB
-    import time
-    
+
     print(f"\n{Fore.CYAN}{'='*70}")
     print(f"{Fore.YELLOW}🌐 SCRAPING SIMPLE")
     print(f"{Fore.CYAN}{'='*70}\n")
-    
-    url = input(f"{Fore.GREEN}Ingresa la URL: {Style.RESET_ALL}").strip()
+
+    url = pedir_url("Ingresa la URL: ")
     if not url:
         return
-    
-    if not url.startswith('http'):
-        url = 'https://' + url
-    
+
     inicio = time.time()
-    scraper = SeleniumScraper(headless=True)
-    
-    domain = urlparse(url).netloc.replace('www.', '').replace('.', '_')
-    datos = scraper.scrapear_pagina_universal(url, domain)
-    scraper.close()
+    domain = nombre_desde_url(url)
+    with Scraper(headless=True) as scraper:
+        datos = scraper.scrapear_pagina_universal(url, domain)
     
     if datos:
         with ScraperDB() as db:
@@ -82,36 +126,27 @@ def scrapear_simple():
 
 def scrapear_paginacion():
     """Opción 2: Scraping con paginación"""
-    from scraper_selenium import SeleniumScraper
+    from scraper import Scraper
     from paginacion import scrapear_con_paginacion
     from database import ScraperDB
-    import time
-    
+
     print(f"\n{Fore.CYAN}{'='*70}")
     print(f"{Fore.YELLOW}📄 SCRAPING CON PAGINACIÓN")
     print(f"{Fore.CYAN}{'='*70}\n")
-    
-    url = input(f"{Fore.GREEN}Ingresa la URL base: {Style.RESET_ALL}").strip()
+
+    url = pedir_url("Ingresa la URL base: ")
     if not url:
         return
-    
-    if not url.startswith('http'):
-        url = 'https://' + url
-    
-    try:
-        max_pag = int(input(f"{Fore.GREEN}¿Cuántas páginas scrapear? (1-10): {Style.RESET_ALL}"))
-        max_pag = max(1, min(max_pag, 10))
-    except:
-        max_pag = 3
-    
+
+    max_pag = pedir_numero("¿Cuántas páginas scrapear? (1-10): ", 3, minimo=1, maximo=10)
+
     inicio = time.time()
-    scraper = SeleniumScraper(headless=True)
-    datos = scrapear_con_paginacion(scraper, url, max_pag)
-    scraper.close()
-    
+    with Scraper(headless=True) as scraper:
+        datos = scrapear_con_paginacion(scraper, url, max_pag)
+
     if datos:
         with ScraperDB() as db:
-            domain = urlparse(url).netloc.replace('www.', '').replace('.', '_')
+            domain = nombre_desde_url(url)
             guardados = db.insertar_productos_bulk(datos, domain)
             duracion = time.time() - inicio
             db.registrar_job(url, domain, len(datos), duracion=duracion)
@@ -119,7 +154,7 @@ def scrapear_paginacion():
 
 def comparar_precios():
     """Opción 3: Comparar precios entre sitios"""
-    from scraper_selenium import SeleniumScraper
+    from scraper import Scraper
     from comparador import comparar_sitios
     
     print(f"\n{Fore.CYAN}{'='*70}")
@@ -130,28 +165,20 @@ def comparar_precios():
     print(f"{Fore.CYAN}  - PcComponentes vs Amazon (portátiles)")
     print(f"{Fore.CYAN}  - Diferentes categorías del mismo sitio\n")
     
-    url1 = input(f"{Fore.GREEN}URL del primer sitio: {Style.RESET_ALL}").strip()
+    url1 = pedir_url("URL del primer sitio: ")
     if not url1:
         return
-    if not url1.startswith('http'):
-        url1 = 'https://' + url1
-    
-    url2 = input(f"{Fore.GREEN}URL del segundo sitio: {Style.RESET_ALL}").strip()
+
+    url2 = pedir_url("URL del segundo sitio: ")
     if not url2:
         return
-    if not url2.startswith('http'):
-        url2 = 'https://' + url2
     
     nombre1 = input(f"{Fore.GREEN}Nombre del sitio 1 (ej: PcComponentes): {Style.RESET_ALL}").strip() or "Sitio 1"
     nombre2 = input(f"{Fore.GREEN}Nombre del sitio 2 (ej: Amazon): {Style.RESET_ALL}").strip() or "Sitio 2"
     
-    try:
-        umbral = float(input(f"{Fore.GREEN}Umbral de similitud (0.5-1.0, default 0.6): {Style.RESET_ALL}") or "0.6")
-        umbral = max(0.5, min(umbral, 1.0))
-    except:
-        umbral = 0.6
-    
-    comparar_sitios(url1, url2, SeleniumScraper, nombre1, nombre2, umbral)
+    umbral = pedir_numero("Umbral de similitud (0.5-1.0, default 0.6): ", 0.6, minimo=0.5, maximo=1.0, tipo=float)
+
+    comparar_sitios(url1, url2, Scraper, nombre1, nombre2, umbral)
 
 def ver_productos():
     """Opción 4: Ver productos guardados"""
@@ -159,10 +186,7 @@ def ver_productos():
     
     with ScraperDB() as db:
         sitio = input(f"{Fore.GREEN}Filtrar por sitio (Enter para todos): {Style.RESET_ALL}").strip() or None
-        try:
-            limite = int(input(f"{Fore.GREEN}Cantidad a mostrar (default 20): {Style.RESET_ALL}") or "20")
-        except:
-            limite = 20
+        limite = pedir_numero("Cantidad a mostrar (default 20): ", 20, minimo=1)
         
         productos = db.obtener_productos(sitio, limite)
         
@@ -175,10 +199,7 @@ def ver_productos():
         print(f"{Fore.CYAN}{'='*70}\n")
         
         for p in productos:
-            print(f"{Fore.WHITE}{p['id']}. {p['titulo'][:60]}")
-            print(f"   💰 {p['precio']}")
-            print(f"   🏪 Sitio: {p['sitio']}")
-            print(f"   📅 {p['fecha_scraping']}\n")
+            mostrar_producto(p)
 
 def buscar_productos():
     """Opción 5: Buscar productos"""
@@ -200,10 +221,7 @@ def buscar_productos():
         print(f"{Fore.CYAN}{'='*70}\n")
         
         for p in productos:
-            print(f"{Fore.WHITE}{p['id']}. {p['titulo']}")
-            print(f"   💰 {p['precio']}")
-            print(f"   🏪 Sitio: {p['sitio']}")
-            print(f"   📅 {p['fecha_scraping']}\n")
+            mostrar_producto(p, truncar_titulo=False)
 
 def ver_estadisticas():
     """Opción 6: Ver estadísticas"""
@@ -229,10 +247,7 @@ def limpiar_datos():
     """Opción 7: Limpiar datos antiguos"""
     from database import ScraperDB
     
-    try:
-        dias = int(input(f"{Fore.GREEN}Eliminar datos más antiguos de cuántos días? (default 30): {Style.RESET_ALL}") or "30")
-    except:
-        dias = 30
+    dias = pedir_numero("Eliminar datos más antiguos de cuántos días? (default 30): ", 30, minimo=0)
     
     confirmar = input(f"{Fore.YELLOW}⚠️  ¿Estás seguro? (s/n): {Style.RESET_ALL}").strip().lower()
     if confirmar != 's':
@@ -258,21 +273,12 @@ def crear_tarea():
     if not nombre:
         return
     
-    url = input(f"{Fore.GREEN}URL a scrapear: {Style.RESET_ALL}").strip()
+    url = pedir_url("URL a scrapear: ")
     if not url:
         return
-    if not url.startswith('http'):
-        url = 'https://' + url
-    
-    try:
-        intervalo = int(input(f"{Fore.GREEN}Intervalo en minutos (default 60): {Style.RESET_ALL}") or "60")
-    except:
-        intervalo = 60
-    
-    try:
-        paginas = int(input(f"{Fore.GREEN}Páginas a scrapear (default 1): {Style.RESET_ALL}") or "1")
-    except:
-        paginas = 1
+
+    intervalo = pedir_numero("Intervalo en minutos (default 60): ", 60, minimo=1)
+    paginas = pedir_numero("Páginas a scrapear (default 1): ", 1, minimo=1)
     
     prog.agregar_tarea(url, nombre, intervalo, paginas)
     print()
@@ -288,7 +294,7 @@ def ver_tareas():
 def iniciar_programador():
     """Opción 10: Iniciar programador"""
     from programador import Programador
-    from scraper_selenium import SeleniumScraper
+    from scraper import Scraper
     
     prog = Programador()
     prog.cargar_tareas()
@@ -297,7 +303,7 @@ def iniciar_programador():
         print(f"\n{Fore.YELLOW}⚠️  No hay tareas programadas. Crea una primero (opción 8)\n")
         return
     
-    prog.iniciar(SeleniumScraper)
+    prog.iniciar(Scraper)
     
     try:
         input(f"{Fore.CYAN}Presiona Enter para detener el programador...{Style.RESET_ALL}")
